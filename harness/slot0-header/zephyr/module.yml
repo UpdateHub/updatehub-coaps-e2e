@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 O.S. Systems Software LTDA.
+# SPDX-License-Identifier: Apache-2.0
+
+name: e2e-slot0-header
+build:
+  cmake: .
+  kconfig: Kconfig

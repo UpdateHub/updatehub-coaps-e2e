@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 O.S. Systems Software LTDA.
+# SPDX-License-Identifier: Apache-2.0
+# Run a command in this repo's devshell with a clean environment.
+exec nix develop -i --keep HOME --keep TERM --keep USER \
+	--keep E2E_WORKSPACE --keep E2E_BUILD --keep CDN_BIN --keep ZEPHYR_GIT_REFERENCE \
+	"$(dirname "$0")/.." -c "$@"

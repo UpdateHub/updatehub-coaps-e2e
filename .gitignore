@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 O.S. Systems Software LTDA.
+# SPDX-License-Identifier: Apache-2.0
+
+*.key
+/ws/
+/run/
+/bin/
+/ws45/
+/build*/
+/pki/
+/drafts/

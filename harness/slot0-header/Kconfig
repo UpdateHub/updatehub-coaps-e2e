@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 O.S. Systems Software LTDA.
+# SPDX-License-Identifier: Apache-2.0
+
+config E2E_SLOT0_HEADER
+	bool "Seed slot0 header and device id for UpdateHub on QEMU (test only)"
+	depends on FLASH_MAP
+	help
+	  RAM-backed simulated flash starts erased, so there is no image
+	  header for the UpdateHub client to read its firmware version from.
+	  Seed one before the application starts.
