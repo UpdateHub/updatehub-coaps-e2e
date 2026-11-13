@@ -1,0 +1,345 @@
+From 8bafb7182b7f53a31dd1e47802c845bd6395193a Mon Sep 17 00:00:00 2001
+From: Otavio Salvador <otavio@ossystems.com.br>
+Date: Fri, 13 Nov 2026 13:49:28 -0300
+Subject: [PATCH 4/4] samples: mgmt: updatehub: pin the UpdateHub root CAs for
+ DTLS
+
+The DTLS build registered a server certificate and its private key as
+the device's own credentials and never set a trust anchor, so peer
+verification could not succeed. The bundled certificate was a 2048-bit
+RSA one that expired in 2020, and the README told users to generate a
+server key and embed it in the device.
+
+UpdateHub Cloud authenticates with ECDSA P-256 certificates signed by
+an UpdateHub root CA, and devices only need the roots:
+
+- ship UpdateHub Device Root CA R1, which signs the current server
+  certificate, and R2, a standby root, so the server can move to R2
+  without a firmware update
+- register them as one TLS_CREDENTIAL_CA_CERTIFICATE under
+  UPDATEHUB_DTLS_SEC_TAG and stop shipping a private key. TLS
+  credentials hold one credential per type and tag, so the roots are
+  kept as a single NUL-terminated PEM bundle, which Mbed TLS parses
+  into one CA chain
+- add UPDATEHUB_SAMPLE_ROOT_CA_FILE so the roots can be replaced, for
+  example to test against a local server
+- switch overlay-dtls.conf to TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+  with extended master secret and PEM parsing. A handshake peaks at
+  about 10 KiB of Mbed TLS heap, but the first-fit allocator fragments
+  and 16 KiB already failed with both roots on native_sim/native/64,
+  so use 24 KiB. The handshake runs in the system work queue or shell
+  thread, which prj.conf already sizes, so the main stack override is
+  dropped
+- rewrite README step 2.2 accordingly
+
+Signed-off-by: Otavio Salvador <otavio@ossystems.com.br>
+---
+ samples/subsys/mgmt/updatehub/CMakeLists.txt  |  19 +++---
+ samples/subsys/mgmt/updatehub/Kconfig         |  10 +++
+ samples/subsys/mgmt/updatehub/README.rst      |  58 +++++++++++-------
+ .../subsys/mgmt/updatehub/overlay-dtls.conf   |  16 +++--
+ .../mgmt/updatehub/src/c_certificates.h       |  17 +++--
+ .../updatehub/src/certificates/privkey.der    | Bin 1218 -> 0 bytes
+ .../updatehub/src/certificates/servercert.der | Bin 879 -> 0 bytes
+ .../src/certificates/updatehub-root-ca.pem    |  29 +++++++++
+ samples/subsys/mgmt/updatehub/src/main.c      |  16 +----
+ 9 files changed, 103 insertions(+), 62 deletions(-)
+ delete mode 100644 samples/subsys/mgmt/updatehub/src/certificates/privkey.der
+ delete mode 100644 samples/subsys/mgmt/updatehub/src/certificates/servercert.der
+ create mode 100644 samples/subsys/mgmt/updatehub/src/certificates/updatehub-root-ca.pem
+
+diff --git a/samples/subsys/mgmt/updatehub/CMakeLists.txt b/samples/subsys/mgmt/updatehub/CMakeLists.txt
+index 8356b458c9d..94efd0b19ba 100644
+--- a/samples/subsys/mgmt/updatehub/CMakeLists.txt
++++ b/samples/subsys/mgmt/updatehub/CMakeLists.txt
+@@ -13,16 +13,11 @@ project(updatehub)
+ target_sources(app PRIVATE src/main.c)
+ 
+ if(CONFIG_UPDATEHUB_DTLS)
+-    set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated/)
+-
+-    foreach(inc_file
+-            servercert.der
+-            privkey.der
+-            )
+-        generate_inc_file_for_target(
+-            ${ZEPHYR_CURRENT_LIBRARY}
+-            src/certificates/${inc_file}
+-            ${gen_dir}/${inc_file}.inc
+-            )
+-    endforeach()
++  get_filename_component(root_ca ${CONFIG_UPDATEHUB_SAMPLE_ROOT_CA_FILE}
++    ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR}
++  )
++  generate_inc_file_for_target(app
++    ${root_ca}
++    ${ZEPHYR_BINARY_DIR}/include/generated/updatehub-root-ca.pem.inc
++  )
+ endif()
+diff --git a/samples/subsys/mgmt/updatehub/Kconfig b/samples/subsys/mgmt/updatehub/Kconfig
+index 4ff7572e1a2..60820319382 100644
+--- a/samples/subsys/mgmt/updatehub/Kconfig
++++ b/samples/subsys/mgmt/updatehub/Kconfig
+@@ -29,4 +29,14 @@ config UPDATEHUB_SAMPLE_WIFI_PSK
+ 	default "secret_passwd"
+ endif
+ 
++config UPDATEHUB_SAMPLE_ROOT_CA_FILE
++	string "UpdateHub root CA certificates (PEM)"
++	default "src/certificates/updatehub-root-ca.pem"
++	depends on UPDATEHUB_DTLS
++	help
++	  PEM file with the root CA certificates that may sign the UpdateHub
++	  server certificate. All of them are registered as one DTLS trust
++	  anchor credential. Relative paths are resolved from the sample
++	  directory.
++
+ source "Kconfig.zephyr"
+diff --git a/samples/subsys/mgmt/updatehub/README.rst b/samples/subsys/mgmt/updatehub/README.rst
+index 6c7ac40a0dc..45305ffc1e0 100644
+--- a/samples/subsys/mgmt/updatehub/README.rst
++++ b/samples/subsys/mgmt/updatehub/README.rst
+@@ -103,30 +103,44 @@ Step 2.2: UpdateHub Cloud
+ The UpdateHub Cloud is an enterprise-grade solution.  It provides almost same
+ resources than UpdateHub-CE with the DTLS as main diferential.  For more
+ details on how to use the UpdateHub Cloud please refer to the documentation on
+-`updatehub.io`_.  The UpdateHub Cloud has the option to use CoAPS/DTLS or not.
+-If you want to use the CoAPS/DTLS, simply add the ``overlay-dtls.conf`` when
+-building the sample.  You can use the provided certificate for test this
+-example or create your own.  The below procedure instruct how create a new
+-certificate using openssl on a Linux machine on terminal ``terminal 2``.
+-
+-.. code-block:: console
+-
+-    openssl genrsa -out privkey.pem 512
+-    openssl req -new -x509 -key privkey.pem -out servercert.pem
+-
+-The ``servercert`` and ``privkey`` files must be embedded in the application
+-by ``certificates.h`` file.  The following procedure can be used to generated
+-the required ``der`` files:
+-
+-.. code-block:: console
+-
+-    openssl x509 -in servercert.pem -outform DER -out servercert.der
+-    openssl pkcs8 -topk8 -inform PEM -outform DER -nocrypt -in privkey.pem
+-      -out privkey.der
++`updatehub.io`_.
++
++The UpdateHub Cloud accepts plain CoAP on port 5683 and CoAPS (DTLS 1.2) on
++port 5684.  To use CoAPS, add ``overlay-dtls.conf`` when building the sample.
++The server authenticates with an ECDSA P-256 certificate signed by an
++UpdateHub root CA, and the device verifies that chain and the server name
++:kconfig:option:`CONFIG_UPDATEHUB_SERVER`.  The device does not authenticate
++itself with a certificate, so it never holds a private key.
++
++The sample ships the UpdateHub root CA certificates in
++:zephyr_file:`samples/subsys/mgmt/updatehub/src/certificates/updatehub-root-ca.pem`
++and registers them as one ``TLS_CREDENTIAL_CA_CERTIFICATE`` under the security
++tag :kconfig:option:`CONFIG_UPDATEHUB_DTLS_SEC_TAG`:
++
++* ``UpdateHub Device Root CA R1``, which signs the current server certificate,
++  SHA-256 fingerprint
++  ``D2:D8:AB:2C:24:05:FC:1D:71:85:7C:96:62:3C:B6:60:11:2A:D2:32:77:74:89:52:29:CA:58:88:E7:02:49:3E``
++* ``UpdateHub Device Root CA R2``, a standby root, so the server can move to
++  it without a firmware update, SHA-256 fingerprint
++  ``73:E8:0C:AE:CF:AD:A9:4E:89:0C:EC:F4:E1:C0:D1:39:F6:90:D5:E8:EB:D7:7E:74:09:3D:7B:29:A0:1D:C2:AB``
++
++Keep both roots in products so they keep working when the server moves to the
++standby root.  Zephyr keeps one credential per type and security tag, so several
++roots must share one PEM file rather than be added one by one.
++
++To test against a server of your own, build with
++``CONFIG_UPDATEHUB_SAMPLE_ROOT_CA_FILE`` pointing to a PEM file with the root
++CA that signs that server's certificate, and set
++:kconfig:option:`CONFIG_UPDATEHUB_SERVER` to a name present in the server
++certificate.
+ 
++.. note::
+ 
+-The ``der`` files should be placed on the sample source at certificates
+-directory.
++    Certificate validity dates are only checked when
++    :kconfig:option:`CONFIG_MBEDTLS_HAVE_TIME_DATE` is enabled, which requires a
++    trusted wall clock (for example SNTP or an RTC) to be set before the first
++    connection.  With the option enabled and no valid clock, the handshake
++    rejects every certificate as not yet valid.
+ 
+ .. note::
+ 
+diff --git a/samples/subsys/mgmt/updatehub/overlay-dtls.conf b/samples/subsys/mgmt/updatehub/overlay-dtls.conf
+index d0a22ff4e31..5c4b333e166 100644
+--- a/samples/subsys/mgmt/updatehub/overlay-dtls.conf
++++ b/samples/subsys/mgmt/updatehub/overlay-dtls.conf
+@@ -5,9 +5,15 @@
+ #
+ 
+ CONFIG_UPDATEHUB_DTLS=y
+-#Minimal TLS configuration
+-CONFIG_MAIN_STACK_SIZE=3000
++
++# UpdateHub Cloud uses DTLS 1.2 with ECDSA P-256 certificates
++CONFIG_MBEDTLS_CIPHERSUITE_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256=y
++CONFIG_PSA_WANT_ECC_SECP_R1_256=y
++CONFIG_MBEDTLS_SSL_EXTENDED_MASTER_SECRET=y
++# The root CA file is a PEM bundle
++CONFIG_MBEDTLS_PEM_PARSE_C=y
++
++# A handshake peaks around 10 KiB in use, but the first-fit allocator
++# fragments: 16 KiB already failed with both roots on a 64-bit target
++CONFIG_MBEDTLS_HEAP_SIZE=24576
+ CONFIG_NET_BUF_RX_COUNT=50
+-CONFIG_MBEDTLS_HEAP_SIZE=60000
+-CONFIG_MBEDTLS_CIPHERSUITE_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256=y
+-# End tls configs
+diff --git a/samples/subsys/mgmt/updatehub/src/c_certificates.h b/samples/subsys/mgmt/updatehub/src/c_certificates.h
+index b1a455a3239..394e5bafddc 100644
+--- a/samples/subsys/mgmt/updatehub/src/c_certificates.h
++++ b/samples/subsys/mgmt/updatehub/src/c_certificates.h
+@@ -8,16 +8,13 @@
+ #define __CERTIFICATE_H__
+ 
+ #if defined(CONFIG_UPDATEHUB_DTLS)
+-#define CA_CERTIFICATE_TAG 1
+-
+-static const unsigned char server_certificate[] = {
+-    #include "servercert.der.inc"
+-};
+-
+-
+-static const unsigned char private_key[] = {
+-    #include "privkey.der.inc"
++/* Mbed TLS only parses PEM, and so more than one certificate, from a
++ * NUL-terminated buffer.
++ */
++static const unsigned char updatehub_root_ca[] = {
++#include "updatehub-root-ca.pem.inc"
++0x00
+ };
+-
+ #endif
++
+ #endif /* __CERTIFICATE_H__ */
+diff --git a/samples/subsys/mgmt/updatehub/src/certificates/privkey.der b/samples/subsys/mgmt/updatehub/src/certificates/privkey.der
+deleted file mode 100644
+index 5d6cdf9928006ab90400b1b7ad23861c870578b9..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 1218
+zcmXqLV%f*U$Y8+B#;Mij(e|B}k&%&=fu)IMg+UX`5++6lrY1&4hLevNjp}*6nzYAU
+zd2RCZaX|8yo?rD_FIm);YVgl=$aoQ)(a&rAvN7y}Skk)c??Of^g<t)>ci74{=;rtJ
+z*-cI9dF~aJRpKG>0c`(;((6R7hAncrF8X=#FTcgHSC?#j?EW=ihvk6~7nivF=;|})
+z{|Sq}OG@Ie>|S2|<zv0z3B^Jk$5j~(nj#B?zn6K<=D56noAH@~U*6la_n6%%JnyG?
+z-pW>Z@+E23>017Va?zIe=Pur&s?)Xb#n~Mmn@>C~{CWIqo9A8LG)Ir=-`zb0OHE%#
+z9WoP3Rywi8Yj3FArj|-)xyt$&)3~|2?svV(Svz;8zlXBpRm*F#i{H7;-nJ)1G?R&$
+zk%18$5=R!6SPE@3vD2+w+7Wo;lUmZ2Yt^ndsucEkt^ed$CA9gQXU6H-HqlqR(hs}d
+z_uz}HY-M?}f&19j$6sbV()zP&+h(bqORnF&X#ONAM^58D&+fT*|J}Qvwd{)S<^wx@
+zUxfOd<m7!;#JVsdjH$pOr^Qox?unDPGF~WdJ)S4LvLnEjVYZNz?TOw=`vgUwW?Q-X
+zFUyE*&xlvFk)3|Ufx9vzOwi>_f2Loqj9GW{BdOC;{@cT5aOwBBiShn<(kr*Lad$i0
+z?4QBcryn!0SU$~^{ZOX6`^Da}S(Sxfq^GZ+xmsq^2T6{f0atwI-&@)Inj@aQhxN#U
+z*Luyn%x|qWIQRSC_X~_njg1UX4|Q6IcFA_~F8+LZlV0uN9gS>~8`Dn3e7`C@eP!Fs
+zRYJM3r&zvSF1oV3Tl{^^H{DaNSH)LG+--TP>=A#1MdnC+#M<+btHjniPVjwM*S@x9
+zo^`Tf^jfXGJClTJ90b(^gJ(}$@Y?@DbMSP<T?~^J*91%12j#D1n-=^_=YPqeDJwy4
+zc<>>QgXy90t(!l5ZahueetW;*56kRHinWf9gTrp6ezzCQxxeYzLx~4X<@K)wFS@Bm
+zwA{_&T%q{b_!!@k*x8!(@AsXmdU-(XL+<A{+csQP<)39(TGqSjiHfq~Nwyi{4SR}j
+zE_@{;<{fGw^i*$6SVZ5oUk>F5ubjX4qEKS0TA|TFrpAWg(w=(<S{#*p52$tDY+ri1
+zV)NI=;JpieObC4;$LY~o%l)7$T=r2jLvPfwyI(#{Y*LxK)WK79&Bpsp>P?d7TaDA7
+z3v@rv&~KRhE!6Dc+icGIitEA+-#3^%TjB1totZ`1V&>B4i-Nl6X6(EkQJ!(;nponQ
+ztmO?4Cayc&z2Nz&dmEV=8!F6?m+e_>)E#v^de;lyEi-Rx<rZ!_r*r$-lb^TSGfz)x
+z&z!aA!x~P*B_4M-Wgbt|6jD*Byt+8UQ+&pZWxHQgXSY46*L!;D>HDQylvE{G8r-kH
+z?yMx7@P;wRH^NkaL4S2extxg5qw_gVuE&0}+_7Zwi}|bF!qxRHH6f;yD_~(GC?<No
+zn_fAqCVpdzlir&TdfdFnADr!4e4X+0uBmcc;*Tfj@0)$sU~l@l>E%I_BvXn7<2G9L
+zUS`d`wY5S*L-)<Y)b2;CKHMt^bi8qBe&3O&>D=cJHwh=|l^*$TE3n6}=aePC#LS0R
+idvi`nUAz@=On7$T>y0nCV-o*GKU?Qimt^3Oa2o(D7f);e
+
+diff --git a/samples/subsys/mgmt/updatehub/src/certificates/servercert.der b/samples/subsys/mgmt/updatehub/src/certificates/servercert.der
+deleted file mode 100644
+index 08ae9e434e1cf4cfc11b96ebf2af19e22d5a3d97..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 879
+zcmXqLV$L>bVhUcs%*4pVBob!WacM=gXL@%~Mb!+gh3Y-~mbM!3vT<s)d9;1!Wn|=L
+zWiW6x<Tl`BV-96u6J~M@H54`w1aUZcxPtR@Q+0z&5=&AI6%FJ;f?PZjo_QsyMR}<u
+z3gMY4>6s<P3IQdR3O*$%26E!OhL#4#hL(mV#>S?WQR2Kt1_s847Ems=tZ8CYLiPY7
+zD+6;ABR_*d6C)Q>6C)$T$w!Pv^*moq+GDP~Hu?EDAo)wrullW*Eb2-%_-8s~ya>+d
+z=QV!W7<NG{X<hYqA)}STum0XUY-JmC^ZWYjrl#~f_ln9Y@sRicw*Nxubs|^87P(v(
+z{k-^>-{RP-OEx}s{~EBv@<51-OI&_*^_lbkghk&aCGl5wFR%Xcv0m_mVxf-Xs*DCr
+zkp;rv%e-cDT;9LU_)Nhs?`_(9%x)B(_ftG?Wh*@Sk~HgdEq_C~Xv_O^7jIG3>00>W
+z><*93C!QAmJpQ%K^Db|iqsR2`?w*3Brmv$8nTaJUo!H{FH`HxYOQo}1Wqpik+}vIF
+zyWZriojcRtL)r1F<u%#G@7!i@+Y=(1$;8aaz_>WrAkaXTjX6}7k420{q&Ce(AoSnr
+z^vj!iL)}>97cnOJ1cD<}R+&Y@K&%0~0)CKwVMfOPEUX61jEw)0gPj{3?2HW4u7}Pn
+z@BYwSCTp<AX2ZlIU#dL}Pi^FAJh5z6-E_z2hVp5b-`tBmVlwH{6wZY+c4!>mSQFKq
+zH)~3@`ObZ>b$K5Lc5>g@zd~Sw=H~eoT}rdg$ka~zxS~%;Z25*Cu5&|U_n%pLymgka
+zrHb9D=eck0)$3SfyqU7flk<;~w_&sY=E(00&qt)DUUhrW>bLBLc9KNo!V8yf94-20
+zxg@@vfBNTQFNHXkZtts`*VjK<z3I?dqo2yDSKITX^`7tNDKJ|yDPv|}y7V93!aXJz
+z8u&iFpB8v_`O)t6YiuWI-MaM2YjW1nO*>~RSZ~f=oMS9}Ed8Nr$D2($Wh>vD6M4SP
+LId9EZWtr0e`p;W-
+
+diff --git a/samples/subsys/mgmt/updatehub/src/certificates/updatehub-root-ca.pem b/samples/subsys/mgmt/updatehub/src/certificates/updatehub-root-ca.pem
+new file mode 100644
+index 00000000000..74a40d2565e
+--- /dev/null
++++ b/samples/subsys/mgmt/updatehub/src/certificates/updatehub-root-ca.pem
+@@ -0,0 +1,29 @@
++SPDX-FileCopyrightText: Copyright (c) 2026 O.S.Systems
++SPDX-License-Identifier: Apache-2.0
++
++-----BEGIN CERTIFICATE-----
++MIIB5DCCAYqgAwIBAgIUNmJnDvSR2iy2NYptP0rtuNhp/wcwCgYIKoZIzj0EAwIw
++PTEVMBMGA1UECgwMTy5TLiBTeXN0ZW1zMSQwIgYDVQQDDBtVcGRhdGVIdWIgRGV2
++aWNlIFJvb3QgQ0EgUjEwIBcNMjYxMTEzMTcwNTA2WhgPMjA1MTExMTMxNzA1MDZa
++MD0xFTATBgNVBAoMDE8uUy4gU3lzdGVtczEkMCIGA1UEAwwbVXBkYXRlSHViIERl
++dmljZSBSb290IENBIFIxMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjRomlXkT
++2OQmJwWTuuQUN6cspQDRNQT/RyLSjoHwnYOnaBermwGoygzZwAQ/RNopHVX4Yb7a
++pLvDBD5yyTBU6qNmMGQwHQYDVR0OBBYEFBgG5WJfXHEin9aIhxDX6eroE4VVMB8G
++A1UdIwQYMBaAFBgG5WJfXHEin9aIhxDX6eroE4VVMBIGA1UdEwEB/wQIMAYBAf8C
++AQAwDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMCA0gAMEUCIQCGJa01ybV/emo3
++OmV7945BU6OetNeTOGtcViyauDoznwIgapsIQwK9H78YQVKbiVHJxJ7xDowks0JH
++Ad2qWkuWYqc=
++-----END CERTIFICATE-----
++-----BEGIN CERTIFICATE-----
++MIIB5TCCAYqgAwIBAgIUa0gLDOJKNIsDN+fsPJFII7NGMKgwCgYIKoZIzj0EAwIw
++PTEVMBMGA1UECgwMTy5TLiBTeXN0ZW1zMSQwIgYDVQQDDBtVcGRhdGVIdWIgRGV2
++aWNlIFJvb3QgQ0EgUjIwIBcNMjYxMTEzMTcwNTA2WhgPMjA1MTExMTMxNzA1MDZa
++MD0xFTATBgNVBAoMDE8uUy4gU3lzdGVtczEkMCIGA1UEAwwbVXBkYXRlSHViIERl
++dmljZSBSb290IENBIFIyMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhXyUkksJ
++bqvyYDFKNjWqYq61INkzqnoSRs6K86L1Yx9A5ErrA8OwYg0YgJUSJ6VfsbbKChSE
++dndnPo470P4EcqNmMGQwHQYDVR0OBBYEFEkwKEIhNktLyDseiweV/4M6yDOuMB8G
++A1UdIwQYMBaAFEkwKEIhNktLyDseiweV/4M6yDOuMBIGA1UdEwEB/wQIMAYBAf8C
++AQAwDgYDVR0PAQH/BAQDAgEGMAoGCCqGSM49BAMCA0kAMEYCIQD/1mwkF9JoSWeI
++WiIGrPPfwebx4lFeJNwspQxZbEzEsQIhAP9cYP52qbYyODTPz3YUwF76AqKPq/xW
++p9HmcAt6gsPc
++-----END CERTIFICATE-----
+diff --git a/samples/subsys/mgmt/updatehub/src/main.c b/samples/subsys/mgmt/updatehub/src/main.c
+index 9f9af6ae003..1167a300ed0 100644
+--- a/samples/subsys/mgmt/updatehub/src/main.c
++++ b/samples/subsys/mgmt/updatehub/src/main.c
+@@ -88,19 +88,9 @@ int main(void)
+ 	LOG_INF("UpdateHub sample app started");
+ 
+ #if defined(CONFIG_UPDATEHUB_DTLS)
+-	if (tls_credential_add(CA_CERTIFICATE_TAG,
+-			       TLS_CREDENTIAL_PUBLIC_CERTIFICATE,
+-			       server_certificate,
+-			       sizeof(server_certificate)) < 0) {
+-		LOG_ERR("Failed to register server certificate");
+-		return 0;
+-	}
+-
+-	if (tls_credential_add(CA_CERTIFICATE_TAG,
+-			       TLS_CREDENTIAL_PRIVATE_KEY,
+-			       private_key,
+-			       sizeof(private_key)) < 0) {
+-		LOG_ERR("Failed to register private key");
++	if (tls_credential_add(CONFIG_UPDATEHUB_DTLS_SEC_TAG, TLS_CREDENTIAL_CA_CERTIFICATE,
++			       updatehub_root_ca, sizeof(updatehub_root_ca)) < 0) {
++		LOG_ERR("Failed to register the UpdateHub root CA");
+ 		return 0;
+ 	}
+ #endif
+-- 
+2.56.0
+

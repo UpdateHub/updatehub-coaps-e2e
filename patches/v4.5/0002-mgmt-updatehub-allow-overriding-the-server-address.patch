@@ -1,0 +1,127 @@
+From ad5aa291b7f949cbc716e6d4d97d9f4eca209f3c Mon Sep 17 00:00:00 2001
+From: Otavio Salvador <otavio@ossystems.com.br>
+Date: Fri, 13 Nov 2026 13:07:25 -0300
+Subject: [PATCH 2/4] mgmt: updatehub: allow overriding the server address
+
+UPDATEHUB_SERVER was only available together with UPDATEHUB_CE, so a
+build talking to UpdateHub Cloud always used coap.updatehub.io. That
+makes it impossible to point a device at a staging or local test
+server without pretending to be a Community Edition deployment.
+
+Make the option always available and default it to the Cloud server
+when UPDATEHUB_CE is disabled. Configurations that enable UPDATEHUB_CE
+keep their behaviour. The sample's 802.15.4 and OpenThread overlays
+already set UPDATEHUB_SERVER without UPDATEHUB_CE, which was silently
+ignored; they now take effect as intended.
+
+Signed-off-by: Otavio Salvador <otavio@ossystems.com.br>
+---
+ samples/subsys/mgmt/updatehub/README.rst |  3 ++-
+ subsys/mgmt/updatehub/Kconfig            | 10 ++++++----
+ subsys/mgmt/updatehub/shell.c            |  9 +--------
+ subsys/mgmt/updatehub/updatehub.c        | 12 +++---------
+ 4 files changed, 12 insertions(+), 22 deletions(-)
+
+diff --git a/samples/subsys/mgmt/updatehub/README.rst b/samples/subsys/mgmt/updatehub/README.rst
+index 0e973dda029..6c7ac40a0dc 100644
+--- a/samples/subsys/mgmt/updatehub/README.rst
++++ b/samples/subsys/mgmt/updatehub/README.rst
+@@ -145,7 +145,8 @@ value will select UpdateHub-CE otherwise ``n`` selects UpdateHub Cloud.
+ 
+ Set :kconfig:option:`CONFIG_UPDATEHUB_SERVER` with your local IP address that runs the
+ UpdateHub-CE server edition.  If your are using a service provider a DNS name
+-is a valid option too.  This option is only valid when using UpdateHub-CE.
++is a valid option too.  When using UpdateHub Cloud it defaults to
++``coap.updatehub.io``.
+ 
+ Set :kconfig:option:`CONFIG_UPDATEHUB_POLL_INTERVAL` with the polling period of your
+ preference, remembering that the limit is between 0 and 43200 minutes
+diff --git a/subsys/mgmt/updatehub/Kconfig b/subsys/mgmt/updatehub/Kconfig
+index fcb633d4173..0403ce49795 100644
+--- a/subsys/mgmt/updatehub/Kconfig
++++ b/subsys/mgmt/updatehub/Kconfig
+@@ -57,11 +57,13 @@ config UPDATEHUB_CE
+ 	  updatehub.io enterprise server.
+ 
+ config UPDATEHUB_SERVER
+-	string "User address for the updatehub-ce-server"
+-	depends on UPDATEHUB_CE
++	string "UpdateHub server address"
++	default "coap.updatehub.io" if !UPDATEHUB_CE
+ 	help
+-	  This configuration is default, if need to use
+-	  other address, must be set on the UpdateHub shell
++	  Host name or IP address of the UpdateHub server. It defaults to
++	  UpdateHub Cloud and must be set when UPDATEHUB_CE is enabled.
++	  With UPDATEHUB_DTLS, the server certificate must be valid for
++	  this name.
+ 
+ config UPDATEHUB_SHELL
+ 	bool "UpdateHub shell utilities"
+diff --git a/subsys/mgmt/updatehub/shell.c b/subsys/mgmt/updatehub/shell.c
+index b844b5a789b..0ad89b165d2 100644
+--- a/subsys/mgmt/updatehub/shell.c
++++ b/subsys/mgmt/updatehub/shell.c
+@@ -14,12 +14,6 @@ LOG_MODULE_DECLARE(updatehub, CONFIG_UPDATEHUB_LOG_LEVEL);
+ #include "updatehub_device.h"
+ #include "updatehub_storage.h"
+ 
+-#if defined(CONFIG_UPDATEHUB_CE)
+-#define UPDATEHUB_SERVER CONFIG_UPDATEHUB_SERVER
+-#else
+-#define UPDATEHUB_SERVER "coap.updatehub.io"
+-#endif
+-
+ static int cmd_run(const struct shell *sh, size_t argc,
+ 		   char **argv)
+ {
+@@ -80,8 +74,7 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
+ 		      firmware_version);
+ 	shell_fprintf(sh, SHELL_NORMAL, "Product uid: %s\n",
+ 		      CONFIG_UPDATEHUB_PRODUCT_UID);
+-	shell_fprintf(sh, SHELL_NORMAL, "UpdateHub Server: %s\n",
+-		      UPDATEHUB_SERVER);
++	shell_fprintf(sh, SHELL_NORMAL, "UpdateHub Server: %s\n", CONFIG_UPDATEHUB_SERVER);
+ 
+ updatehub_shell_error:
+ 	if (device_id) {
+diff --git a/subsys/mgmt/updatehub/updatehub.c b/subsys/mgmt/updatehub/updatehub.c
+index ee6ba4c6546..c4a1a4c1ed6 100644
+--- a/subsys/mgmt/updatehub/updatehub.c
++++ b/subsys/mgmt/updatehub/updatehub.c
+@@ -42,12 +42,6 @@ LOG_MODULE_REGISTER(updatehub, CONFIG_UPDATEHUB_LOG_LEVEL);
+ #define MAX_DOWNLOAD_DATA (MAX_PAYLOAD_SIZE + 32)
+ #define MAX_IP_SIZE 30
+ 
+-#if defined(CONFIG_UPDATEHUB_CE)
+-#define UPDATEHUB_SERVER CONFIG_UPDATEHUB_SERVER
+-#else
+-#define UPDATEHUB_SERVER "coap.updatehub.io"
+-#endif
+-
+ #ifdef CONFIG_UPDATEHUB_DOWNLOAD_SHA256_VERIFICATION
+ #define _DOWNLOAD_SHA256_VERIFICATION
+ #elif defined(CONFIG_UPDATEHUB_DOWNLOAD_STORAGE_SHA256_VERIFICATION)
+@@ -203,7 +197,7 @@ static bool start_coap_client(void)
+ #endif
+ 
+ 	while (resolve_attempts--) {
+-		ret = zsock_getaddrinfo(UPDATEHUB_SERVER, port, &hints, &addr);
++		ret = zsock_getaddrinfo(CONFIG_UPDATEHUB_SERVER, port, &hints, &addr);
+ 		if (ret == 0) {
+ 			break;
+ 		}
+@@ -233,8 +227,8 @@ static bool start_coap_client(void)
+ 		goto error;
+ 	}
+ 
+-	if (zsock_setsockopt(ctx.sock, ZSOCK_SOL_TLS, ZSOCK_TLS_HOSTNAME, UPDATEHUB_SERVER,
+-			     sizeof(UPDATEHUB_SERVER)) < 0) {
++	if (zsock_setsockopt(ctx.sock, ZSOCK_SOL_TLS, ZSOCK_TLS_HOSTNAME, CONFIG_UPDATEHUB_SERVER,
++			     sizeof(CONFIG_UPDATEHUB_SERVER)) < 0) {
+ 		LOG_ERR("Failed to set TLS_HOSTNAME option");
+ 		goto error;
+ 	}
+-- 
+2.56.0
+
