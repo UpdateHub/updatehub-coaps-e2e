@@ -15,7 +15,7 @@ e2e, b = sys.argv[1:]
 c = f"{e2e}/conf"
 subprocess.run([sys.executable, "-m", "west", "build", "-p", "-b", "native_sim/native/64", "-d", b,
                 "zephyr/samples/subsys/mgmt/updatehub", "--",
-                f"-DEXTRA_CONF_FILE=overlay-dtls.conf;{c}/native_sim.conf;{c}/tls-debug.conf;{c}/production-probe.conf"],
+                f"-DEXTRA_CONF_FILE=dtls.conf;{c}/native_sim.conf;{c}/tls-debug.conf;{c}/production-probe.conf"],
                cwd=f"{e2e}/ws", check=True, stdout=subprocess.DEVNULL)
 PY
 grep -E '^CONFIG_UPDATEHUB_(SERVER|SAMPLE_ROOT_CA_FILE|PRODUCT_UID)=' "$b/zephyr/.config"

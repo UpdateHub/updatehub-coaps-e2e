@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """End-to-end CoAPS/DTLS test of the Zephyr UpdateHub client.
 
-Builds the upstream sample with overlay-dtls.conf and runs it against a local
+Builds the upstream sample with dtls.conf and runs it against a local
 DTLS 1.2 CoAP server (the pion/dtls stand-in, or UpdateHub cdn via
 --server-cmd) backed by a fake UpdateHub HTTP API. It checks that:
 
@@ -38,6 +38,8 @@ from pathlib import Path
 E2E = Path(__file__).resolve().parent.parent
 WS = Path(os.environ.get("E2E_WORKSPACE", E2E / "ws")).resolve()
 SAMPLE = WS / "zephyr" / "samples" / "subsys" / "mgmt" / "updatehub"
+# v4.5-branch still uses the name main dropped in 15ee1e487d8.
+DTLS_CONF = "dtls.conf" if (SAMPLE / "dtls.conf").exists() else "overlay-dtls.conf"
 BUILD = E2E / os.environ.get("E2E_BUILD", "build")
 CONF = E2E / "conf"
 PRODUCT = "e4d37cfe6ec48a2d069cc0bbb8b078677e9a0d8df3a027c4d8ea131130c4265f"
@@ -146,7 +148,7 @@ class Target:
         self.builddir = BUILD / name
 
     def build(self, common_extra):
-        conf = ";".join(["overlay-dtls.conf"] + [str(c) for c in self.confs])
+        conf = ";".join([DTLS_CONF] + [str(c) for c in self.confs])
         extra = [f"-DEXTRA_CONF_FILE={conf}", *common_extra, *self.extra]
         if self.modules:
             extra.append("-DEXTRA_ZEPHYR_MODULES=" + ";".join(str(m) for m in self.modules))

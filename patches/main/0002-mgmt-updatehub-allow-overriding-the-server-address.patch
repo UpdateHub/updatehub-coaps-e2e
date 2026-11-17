@@ -1,4 +1,4 @@
-From 60db37789438e45cf2b2f2de1a82e9009c261de1 Mon Sep 17 00:00:00 2001
+From 5535e6692463cf3b76e53758e2f10aa87cec1b07 Mon Sep 17 00:00:00 2001
 From: Otavio Salvador <otavio@ossystems.com.br>
 Date: Fri, 13 Nov 2026 13:07:25 -0300
 Subject: [PATCH 2/4] mgmt: updatehub: allow overriding the server address
@@ -10,9 +10,9 @@ server without pretending to be a Community Edition deployment.
 
 Make the option always available and default it to the Cloud server
 when UPDATEHUB_CE is disabled. Configurations that enable UPDATEHUB_CE
-keep their behaviour. The sample's 802.15.4 and OpenThread overlays
-already set UPDATEHUB_SERVER without UPDATEHUB_CE, which was silently
-ignored; they now take effect as intended.
+keep their behaviour. The sample's 802.15.4 and OpenThread config
+files already set UPDATEHUB_SERVER without UPDATEHUB_CE, which was
+silently ignored; they now take effect as intended.
 
 Signed-off-by: Otavio Salvador <otavio@ossystems.com.br>
 ---
@@ -23,7 +23,7 @@ Signed-off-by: Otavio Salvador <otavio@ossystems.com.br>
  4 files changed, 12 insertions(+), 22 deletions(-)
 
 diff --git a/samples/subsys/mgmt/updatehub/README.rst b/samples/subsys/mgmt/updatehub/README.rst
-index 0e973dda029..6c7ac40a0dc 100644
+index 809cdc6fc7f..0a5e1bceb1b 100644
 --- a/samples/subsys/mgmt/updatehub/README.rst
 +++ b/samples/subsys/mgmt/updatehub/README.rst
 @@ -145,7 +145,8 @@ value will select UpdateHub-CE otherwise ``n`` selects UpdateHub Cloud.
@@ -37,7 +37,7 @@ index 0e973dda029..6c7ac40a0dc 100644
  Set :kconfig:option:`CONFIG_UPDATEHUB_POLL_INTERVAL` with the polling period of your
  preference, remembering that the limit is between 0 and 43200 minutes
 diff --git a/subsys/mgmt/updatehub/Kconfig b/subsys/mgmt/updatehub/Kconfig
-index fcb633d4173..0403ce49795 100644
+index 2672e431653..06687cd077b 100644
 --- a/subsys/mgmt/updatehub/Kconfig
 +++ b/subsys/mgmt/updatehub/Kconfig
 @@ -57,11 +57,13 @@ config UPDATEHUB_CE

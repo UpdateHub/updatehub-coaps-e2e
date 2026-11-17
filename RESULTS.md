@@ -13,10 +13,12 @@ bundle also succeeds (see "Production probe").
 
 ## Zephyr series
 
-Base: main `c4647e2491f` (`patches/main`). The same four commits cherry-pick
-cleanly onto v4.5-branch `cc8e9835a3d` (`patches/v4.5`);
+Base: main `5ac3f201979` (`patches/main`), rebased from `c4647e2491f` after
+main renamed `overlay-dtls.conf` to `dtls.conf`; the e2e suite passed again on
+the new base. The same four commits cherry-pick cleanly onto v4.5-branch
+`cc8e9835a3d` (`patches/v4.5`), where the file keeps its old name.
 `scripts/setup-workspace.sh` recreates either tree. Every commit builds on its
-own.
+own. The footprint figures below were measured on `c4647e2491f`.
 
 Zephyr's `scripts/ci/check_compliance.py`, run with
 `scripts/requirements-compliance.txt`, passes Gitlint, Checkpatch,
@@ -55,7 +57,7 @@ frdm_k64f with no warnings (warnings are errors).
      `UPDATEHUB_DTLS_SEC_TAG` and drops the private key and the old RSA
      certificate (expired in 2020).
    - Adds `CONFIG_UPDATEHUB_SAMPLE_ROOT_CA_FILE` so the roots can be swapped.
-   - Moves `overlay-dtls.conf` to ECDHE-ECDSA-AES128-GCM-SHA256 with extended
+   - Moves `dtls.conf` to ECDHE-ECDSA-AES128-GCM-SHA256 with extended
      master secret and PEM parsing, and sets a 24 KiB mbedTLS heap.
    - Rewrites README step 2.2.
 

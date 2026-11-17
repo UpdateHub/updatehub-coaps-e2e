@@ -13,7 +13,7 @@ patches/v4.5/   the same series on v4.5-branch
 server/         Go stand-in for UpdateHub cdn (pion/dtls + go-coap) and a
                 fake UpdateHub HTTP API (probe, object download, report)
 harness/        Zephyr module used only on qemu_x86 (slot0 header, device id)
-conf/           Kconfig fragments layered on top of the sample's overlay-dtls.conf
+conf/           Kconfig fragments layered on top of the sample's dtls.conf
 scripts/        e2e.py (the harness), workspace setup, PKI and image generators,
                 footprint report, cdn wrapper, production probe
 flake.nix       toolchain: Zephyr SDK (x86_64, arm), west, QEMU, Go, imgtool
@@ -45,7 +45,7 @@ E2E_WORKSPACE=$PWD/ws45 E2E_BUILD=build45 ./run-e2e.sh
 # against UpdateHub cdn (github.com/OSSystems/cdn) built to bin/cdn-coaps
 ./run-e2e.sh --skip-qemu --server-cmd "$PWD/scripts/cdn-server.sh {cert} {key} {backend}"
 
-# flash/RAM cost of overlay-dtls.conf on a real MCU board
+# flash/RAM cost of dtls.conf on a real MCU board
 scripts/devshell scripts/footprint.sh frdm_k64f
 ```
 
@@ -56,7 +56,7 @@ scripts/devshell scripts/footprint.sh frdm_k64f
    in `run/testpki/` (`scripts/make-test-pki.sh`). The PKI mirrors
    production: two roots, R1 signing the server and R2 as the standby,
    shipped to the device as one PEM bundle.
-2. Builds the sample with `overlay-dtls.conf`, the dev bundle as
+2. Builds the sample with `dtls.conf`, the dev bundle as
    `CONFIG_UPDATEHUB_SAMPLE_ROOT_CA_FILE`, and `CONFIG_UPDATEHUB_SERVER`
    pointing at the local server (`localhost`, or `10.0.2.2` under QEMU slirp).
 3. Positive scenarios: the device boots and probes (no update), the harness

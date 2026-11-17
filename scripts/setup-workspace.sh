@@ -13,7 +13,7 @@ set -euo pipefail
 series=${1:-main}
 e2e=$(cd "$(dirname "$0")/.." && pwd)
 case $series in
-main) ws=$e2e/ws rev=c4647e2491ff956f312fe6935ef3fe98623a12eb ;;
+main) ws=$e2e/ws rev=5ac3f20197937a2ee859e1c789bc3b1c11faf219 ;;
 v4.5) ws=$e2e/ws45 rev=cc8e9835a3de0dbcbe18207688c9a05b097c7d04 ;;
 *) echo "unknown series: $series" >&2; exit 1 ;;
 esac

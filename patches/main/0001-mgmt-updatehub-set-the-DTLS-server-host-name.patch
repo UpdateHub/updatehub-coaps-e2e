@@ -1,4 +1,4 @@
-From 4f7085a29556d878578f06aea9eadfb42cd3f4a6 Mon Sep 17 00:00:00 2001
+From 322cd7499135b56216baaa457d1c8762176c2354 Mon Sep 17 00:00:00 2001
 From: Otavio Salvador <otavio@ossystems.com.br>
 Date: Fri, 13 Nov 2026 13:07:13 -0300
 Subject: [PATCH 1/4] mgmt: updatehub: set the DTLS server host name
